@@ -43,6 +43,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.type.MapType;
 import com.fasterxml.jackson.databind.type.SimpleType;
 import com.google.common.collect.Lists;
+import com.google.common.base.Charsets;
 
 /**
  * An utility class which parses a JSON streaming message to a list of strings (represent a row in table).
@@ -69,6 +70,7 @@ public final class TimedJsonStreamParser extends StreamingParser {
     private boolean strictCheck = true;
     private final Map<String, Object> root = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
     private final Map<String, Object> tempMap = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+    private final Map<String, String> colLowerCaseMap = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
     private final Map<String, String[]> nameMap = new HashMap<>();
     public static final String EMBEDDED_PROPERTY_SEPARATOR = "|";
 
@@ -104,6 +106,10 @@ public final class TimedJsonStreamParser extends StreamingParser {
         mapper.disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
         mapper.disable(DeserializationFeature.FAIL_ON_INVALID_SUBTYPE);
         mapper.enable(DeserializationFeature.USE_JAVA_ARRAY_FOR_JSON_ARRAY);
+
+        for (TblColRef col : allColumns) {
+            colLowerCaseMap.put(col.getName(), col.getName().toLowerCase(Locale.ROOT));
+        }
     }
 
     @Override
@@ -117,7 +123,7 @@ public final class TimedJsonStreamParser extends StreamingParser {
             ArrayList<String> result = Lists.newArrayList();
 
             for (TblColRef column : allColumns) {
-                final String columnName = column.getName().toLowerCase(Locale.ROOT);
+                final String columnName = colLowerCaseMap.get(column.getName());
                 if (populateDerivedTimeColumns(columnName, result, t) == false) {
                     result.add(getValueByKey(column, root));
                 }
@@ -128,6 +134,7 @@ public final class TimedJsonStreamParser extends StreamingParser {
             messageRowList.add(streamingMessageRow);
             return messageRowList;
         } catch (IOException e) {
+            logger.error("malformed data: {}", new String(buffer.array(), Charsets.UTF_8));
             logger.error("error", e);
             throw new RuntimeException(e);
         }

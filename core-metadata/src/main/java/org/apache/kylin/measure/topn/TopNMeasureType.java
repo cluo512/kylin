@@ -23,7 +23,9 @@ import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
+import org.apache.commons.collections.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.kylin.common.util.ByteArray;
 import org.apache.kylin.common.util.Dictionary;
@@ -51,6 +53,8 @@ import org.slf4j.LoggerFactory;
 
 import com.google.common.collect.Lists;
 
+import static org.apache.kylin.metadata.realization.SQLDigest.OrderEnum.DESCENDING;
+
 public class TopNMeasureType extends MeasureType<TopNCounter<ByteArray>> {
 
     private static final Logger logger = LoggerFactory.getLogger(TopNMeasureType.class);
@@ -62,6 +66,8 @@ public class TopNMeasureType extends MeasureType<TopNCounter<ByteArray>> {
     public static final String CONFIG_ENCODING_VERSION_PREFIX = "topn.encoding_version.";
     public static final String CONFIG_AGG = "topn.aggregation";
     public static final String CONFIG_ORDER = "topn.order";
+
+    private boolean cuboidCanAnswer;
 
     public static class Factory extends MeasureTypeFactory<TopNCounter<ByteArray>> {
 
@@ -257,6 +263,8 @@ public class TopNMeasureType extends MeasureType<TopNCounter<ByteArray>> {
         // TopN measure can (and only can) provide one numeric measure and one literal dimension
         // e.g. select seller, sum(gmv) from ... group by seller order by 2 desc limit 100
 
+        cuboidCanAnswer = true; // true: have cuboid can answer query， false: no cuboid can answer query
+
         List<TblColRef> literalCol = getTopNLiteralColumn(topN.getFunction());
         for (TblColRef colRef : literalCol) {
             if (digest.filterColumns.contains(colRef) == true) {
@@ -268,6 +276,12 @@ public class TopNMeasureType extends MeasureType<TopNCounter<ByteArray>> {
         if (digest.groupbyColumns.containsAll(literalCol) == false)
             return null;
 
+        List retainList = unmatchedDimensions.stream().filter(colRef -> literalCol.contains(colRef)).collect(Collectors.toList());
+
+        if (retainList.size() > 0){
+            cuboidCanAnswer = false;
+        }
+
         // check digest requires only one measure
         if (digest.aggregations.size() == 1) {
 
@@ -278,10 +292,17 @@ public class TopNMeasureType extends MeasureType<TopNCounter<ByteArray>> {
 
             unmatchedDimensions.removeAll(literalCol);
             unmatchedAggregations.remove(onlyFunction);
+
             return new CapabilityInfluence() {
                 @Override
                 public double suggestCostMultiplier() {
-                    return 0.3; // make sure TopN get ahead of other matched realizations
+                    if (totallyMatchTopN(digest)) {
+                        return 0.3; // make sure TopN get ahead of other matched realizations
+                    } else if (cuboidCanAnswer) {
+                        return 1.3; // fuzzy topN match, but have cuboid can answer query
+                    } else {
+                        return 2;
+                    }
                 }
 
                 @Override
@@ -310,6 +331,34 @@ public class TopNMeasureType extends MeasureType<TopNCounter<ByteArray>> {
         }
 
         return null;
+    }
+
+    private boolean checkSortAndOrder(List<TblColRef> sort, List<SQLDigest.OrderEnum> order) {
+        return CollectionUtils.isNotEmpty(sort) && CollectionUtils.isNotEmpty(order) && sort.size() == order.size();
+    }
+
+    private boolean totallyMatchTopN(SQLDigest digest) {
+        if (!checkSortAndOrder(digest.sortColumns, digest.sortOrders)) {
+            return false;
+        }
+
+        TblColRef sortColumn = digest.sortColumns.get(0);
+
+        // first sort column must be sum()
+        if (digest.groupbyColumns.contains(sortColumn)) {
+            return false;
+        }
+
+        // first order must be desc
+        if (!DESCENDING.equals(digest.sortOrders.get(0))) {
+            return false;
+        }
+
+        if (!digest.hasLimit) {
+            return false;
+        }
+
+        return true;
     }
 
     private boolean isTopNCompatibleSum(FunctionDesc topN, FunctionDesc sum) {
@@ -372,8 +421,15 @@ public class TopNMeasureType extends MeasureType<TopNCounter<ByteArray>> {
                     continue;
                 }
 
+                // topN not totally match, but have cuboid can answer, not use topN to adjust
+                // topN totally match or (topN fuzzy match, but no cuboid can answer), use topN to adjust
+                if (!totallyMatchTopN(sqlDigest) && cuboidCanAnswer) {
+                    continue;
+                }
+
                 logger.info("Rewrite function " + origFunc + " to " + topnFunc);
             }
+
 
             sqlDigest.aggregations = Lists.newArrayList(topnFunc);
             sqlDigest.groupbyColumns.removeAll(topnLiteralCol);

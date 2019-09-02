@@ -22,6 +22,8 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
+import com.google.common.base.Function;
+import com.google.common.collect.Lists;
 import org.apache.commons.lang.StringUtils;
 import org.apache.kylin.common.KylinConfig;
 import org.apache.kylin.common.util.DateFormat;
@@ -31,6 +33,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import com.google.common.base.Preconditions;
+
+import javax.annotation.Nullable;
 
 /**
  * @author yangli9
@@ -92,7 +96,9 @@ public class DictionaryGenerator {
 
         // build
         Dictionary<String> dict = builder.build();
-
+        logger.debug("Dictionary cardinality: " + dict.getSize());
+        logger.debug("Dictionary builder class: " + builder.getClass().getName());
+        logger.debug("Dictionary class: " + dict.getClass().getName());
         // log a few samples
         StringBuilder buf = new StringBuilder();
         for (String s : samples) {
@@ -102,14 +108,19 @@ public class DictionaryGenerator {
             buf.append(s.toString()).append("=>").append(dict.getIdFromValue(s));
         }
         logger.debug("Dictionary value samples: " + buf.toString());
-        logger.debug("Dictionary cardinality: " + dict.getSize());
-        logger.debug("Dictionary builder class: " + builder.getClass().getName());
-        logger.debug("Dictionary class: " + dict.getClass().getName());
+
         return dict;
     }
 
     public static Dictionary mergeDictionaries(DataType dataType, List<DictionaryInfo> sourceDicts) throws IOException {
-        return buildDictionary(dataType, new MultipleDictionaryValueEnumerator(dataType, sourceDicts));
+        List<Dictionary<String>> dictList = Lists.transform(sourceDicts, new Function<DictionaryInfo, Dictionary<String>>() {
+            @Nullable
+            @Override
+            public Dictionary<String> apply(@Nullable DictionaryInfo input) {
+                return input.dictionaryObject;
+            }
+        });
+        return buildDictionary(dataType, new MultipleDictionaryValueEnumerator(dataType, dictList));
     }
 
     private static class DateDictBuilder implements IDictionaryBuilder {

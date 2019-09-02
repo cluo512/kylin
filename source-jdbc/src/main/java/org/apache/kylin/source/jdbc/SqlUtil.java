@@ -23,7 +23,6 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Types;
 import java.util.Random;
-
 import org.apache.kylin.metadata.datatype.DataType;
 import org.apache.kylin.source.hive.DBConnConf;
 import org.slf4j.Logger;
@@ -62,6 +61,7 @@ public class SqlUtil {
     }
 
     public static final int tryTimes = 5;
+    public static final String DRIVER_MISS = "DRIVER_MISS";
 
     public static Connection getConnection(DBConnConf dbconf) {
         if (dbconf.getUrl() == null)
@@ -70,7 +70,8 @@ public class SqlUtil {
         try {
             Class.forName(dbconf.getDriver());
         } catch (Exception e) {
-            logger.error("", e);
+            logger.error("Miss Driver", e);
+            throw new IllegalStateException(DRIVER_MISS);
         }
         boolean got = false;
         int times = 0;
@@ -159,6 +160,6 @@ public class SqlUtil {
     }
 
     public static boolean isScaleApplicable(String typeName) {
-        return DataType.NUMBER_FAMILY.contains(typeName) && !DataType.INTEGER_FAMILY.contains(typeName);
+        return typeName.equals("decimal") || typeName.equals("numeric");
     }
 }

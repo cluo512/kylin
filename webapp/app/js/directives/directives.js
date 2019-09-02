@@ -99,7 +99,7 @@ KylinApp.directive('kylinPagination', function ($parse, $q) {
     }
   };
 })
-  .directive('loading', function ($parse, $q) {
+.directive('loading', function ($parse, $q) {
     return {
       restrict: 'E',
       scope: {},
@@ -395,7 +395,7 @@ KylinApp.directive('kylinPagination', function ($parse, $q) {
       var dOptions = {
         placement : 'right'
       }
-      popOverContent = $templateCache.get(attrs.template);
+      popOverContent = $templateCache.get(attrs.template)? $templateCache.get(attrs.template) : attrs.content;
 
       var placement = attrs.placement? attrs.placement : dOptions.placement;
       var title = attrs.title;

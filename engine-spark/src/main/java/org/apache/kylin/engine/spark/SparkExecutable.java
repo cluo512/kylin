@@ -45,6 +45,7 @@ import org.apache.kylin.cube.CubeSegment;
 import org.apache.kylin.engine.mr.CubingJob;
 import org.apache.kylin.engine.mr.common.BatchConstants;
 import org.apache.kylin.engine.mr.common.JobRelatedMetaUtil;
+import org.apache.kylin.engine.spark.exception.SparkException;
 import org.apache.kylin.job.common.PatternedLogger;
 import org.apache.kylin.job.constant.ExecutableConstants;
 import org.apache.kylin.job.exception.ExecuteException;
@@ -55,6 +56,8 @@ import org.apache.kylin.job.execution.ExecutableState;
 import org.apache.kylin.job.execution.ExecuteResult;
 import org.apache.kylin.job.execution.Output;
 import org.apache.kylin.metadata.model.Segments;
+import org.apache.kylin.metadata.project.ProjectInstance;
+import org.apache.kylin.metadata.project.ProjectManager;
 import org.slf4j.LoggerFactory;
 
 /**
@@ -73,6 +76,7 @@ public class SparkExecutable extends AbstractExecutable {
         this.setParam(CLASS_NAME, className);
     }
 
+
     public void setJobId(String jobId) {
         this.setParam(JOB_ID, jobId);
     }
@@ -87,7 +91,7 @@ public class SparkExecutable extends AbstractExecutable {
 
     public void setCounterSaveAs(String value, String counterOutputPath) {
         this.setParam(COUNTER_SAVE_AS, value);
-        this.setParam(BatchConstants.ARG_COUNTER_OUPUT, counterOutputPath);
+        this.setParam(BatchConstants.ARG_COUNTER_OUTPUT, counterOutputPath);
     }
 
     public String getCounterSaveAs() {
@@ -132,7 +136,7 @@ public class SparkExecutable extends AbstractExecutable {
         final Output output = getOutput();
         if (output.getExtra().containsKey(START_TIME)) {
             final String sparkJobID = output.getExtra().get(ExecutableConstants.SPARK_JOB_ID);
-            if (sparkJobID == null) {
+            if (StringUtils.isEmpty(sparkJobID)) {
                 getManager().updateJobOutput(getId(), ExecutableState.RUNNING, null, null);
                 return;
             }
@@ -200,10 +204,21 @@ public class SparkExecutable extends AbstractExecutable {
             return onResumed(sparkJobId, mgr);
         } else {
             String cubeName = this.getParam(SparkCubingByLayer.OPTION_CUBE_NAME.getOpt());
-            CubeInstance cube = CubeManager.getInstance(context.getConfig()).getCube(cubeName);
-            final KylinConfig config = cube.getConfig();
-
-            setAlgorithmLayer();
+            CubeInstance cube;
+            if (cubeName != null) {
+                cube = CubeManager.getInstance(context.getConfig()).getCube(cubeName);
+            } else {  // Cube name can't be got when loading hive table
+                cube = null;
+            }
+            final KylinConfig config;
+            if (cube != null) {
+                config = cube.getConfig();
+            } else {
+                // when loading hive table, we can't get cube name/config, so we get config from project.
+                String projectName = this.getParam(SparkColumnCardinality.OPTION_PRJ.getOpt());
+                ProjectInstance projectInst = ProjectManager.getInstance(context.getConfig()).getProject(projectName);
+                config = projectInst.getConfig();
+            }
 
             if (KylinConfig.getSparkHome() == null) {
                 throw new NullPointerException();
@@ -228,11 +243,13 @@ public class SparkExecutable extends AbstractExecutable {
             if (StringUtils.isEmpty(jars)) {
                 jars = jobJar;
             }
-
-            String segmentID = this.getParam(SparkCubingByLayer.OPTION_SEGMENT_ID.getOpt());
-            CubeSegment segment = cube.getSegmentById(segmentID);
-            Segments<CubeSegment> mergingSeg = cube.getMergingSegments(segment);
-            dumpMetadata(segment, mergingSeg);
+            if (cube != null) {
+                setAlgorithmLayer();
+                String segmentID = this.getParam(SparkCubingByLayer.OPTION_SEGMENT_ID.getOpt());
+                CubeSegment segment = cube.getSegmentById(segmentID);
+                Segments<CubeSegment> mergingSeg = cube.getMergingSegments(segment);
+                dumpMetadata(segment, mergingSeg);
+            }
 
             StringBuilder stringBuilder = new StringBuilder();
             if (Shell.osType == Shell.OSType.OS_TYPE_WIN) {
@@ -243,12 +260,26 @@ public class SparkExecutable extends AbstractExecutable {
                         "export HADOOP_CONF_DIR=%s && %s/bin/spark-submit --class org.apache.kylin.common.util.SparkEntry ");
             }
 
+            if (getName() != null) {
+                stringBuilder.append("--name \"" + getName() + "\"");
+            }
+
             Map<String, String> sparkConfs = config.getSparkConfigOverride();
 
             String sparkConfigName = getSparkConfigName();
             if (sparkConfigName != null) {
                 Map<String, String> sparkSpecificConfs = config.getSparkConfigOverrideWithSpecificName(sparkConfigName);
                 sparkConfs.putAll(sparkSpecificConfs);
+            }
+
+            // Add hbase fs to spark conf: spark.yarn.access.hadoopFileSystems
+            if (StringUtils.isNotEmpty(config.getHBaseClusterFs())) {
+                String fileSystems = sparkConfs.get("spark.yarn.access.hadoopFileSystems");
+                if (StringUtils.isNotEmpty(fileSystems)) {
+                    sparkConfs.put("spark.yarn.access.hadoopFileSystems", fileSystems + "," + config.getHBaseClusterFs());
+                } else {
+                    sparkConfs.put("spark.yarn.access.hadoopFileSystems", config.getHBaseClusterFs());
+                }
             }
 
             for (Map.Entry<String, String> entry : sparkConfs.entrySet()) {
@@ -301,8 +332,11 @@ public class SparkExecutable extends AbstractExecutable {
                 if (future.isDone() == false) { // user cancelled
                     executorService.shutdownNow(); // interrupt
                     extra = mgr.getOutput(getId()).getExtra();
-                    if (extra != null && extra.get(ExecutableConstants.SPARK_JOB_ID) != null) {
-                        killAppRetry(extra.get(ExecutableConstants.SPARK_JOB_ID));
+                    if (extra != null) {
+                        String newJobId = extra.get(ExecutableConstants.SPARK_JOB_ID);
+                        if (StringUtils.isNotEmpty(newJobId)) {
+                            killAppRetry(newJobId);
+                        }
                     }
 
                     if (isDiscarded()) {
@@ -322,7 +356,7 @@ public class SparkExecutable extends AbstractExecutable {
                     // done, update all properties
                     Map<String, String> joblogInfo = patternedLogger.getInfo();
                     // read counter from hdfs
-                    String counterOutput = getParam(BatchConstants.ARG_COUNTER_OUPUT);
+                    String counterOutput = getParam(BatchConstants.ARG_COUNTER_OUTPUT);
                     if (counterOutput != null) {
                         if (HadoopUtil.getWorkingFileSystem().exists(new Path(counterOutput))) {
                             Map<String, String> counterMap = HadoopUtil.readFromSequenceFile(counterOutput);
@@ -339,15 +373,16 @@ public class SparkExecutable extends AbstractExecutable {
                 extra = mgr.getOutput(getId()).getExtra();
                 extra.put(ExecutableConstants.SPARK_JOB_ID, "");
                 getManager().addJobInfo(getId(), extra);
-                return new ExecuteResult(ExecuteResult.State.ERROR, result != null ? result.getSecond() : "");
+
+                return ExecuteResult.createFailed(new SparkException(result != null ? result.getSecond() : ""));
             } catch (Exception e) {
-                logger.error("error run spark job:", e);
+                logger.error("Error run spark job:", e);
                 return ExecuteResult.createError(e);
             }
         }
     }
 
-    private void dumpMetadata(CubeSegment segment, List<CubeSegment> mergingSeg) throws ExecuteException {
+    protected void dumpMetadata(CubeSegment segment, List<CubeSegment> mergingSeg) throws ExecuteException {
         try {
             if (mergingSeg == null || mergingSeg.size() == 0) {
                 attachSegmentMetadataWithDict(segment);
@@ -363,13 +398,16 @@ public class SparkExecutable extends AbstractExecutable {
     }
 
     // Spark Cubing can only work in layer algorithm
-    private void setAlgorithmLayer() {
+    protected void setAlgorithmLayer() {
         ExecutableManager execMgr = ExecutableManager.getInstance(KylinConfig.getInstanceFromEnv());
         CubingJob cubingJob = (CubingJob) execMgr.getJob(this.getParam(JOB_ID));
         cubingJob.setAlgorithm(CubingJob.AlgorithmEnum.LAYER);
     }
 
     private String getAppState(String appId) throws IOException {
+        if (StringUtils.isEmpty(appId)) {
+            throw new IOException("The app is is null or empty");
+        }
         CliCommandExecutor executor = KylinConfig.getInstanceFromEnv().getCliCommandExecutor();
         PatternedLogger patternedLogger = new PatternedLogger(logger);
         String stateCmd = String.format(Locale.ROOT, "yarn application -status %s", appId);
@@ -385,6 +423,11 @@ public class SparkExecutable extends AbstractExecutable {
     }
 
     private int killAppRetry(String appId) throws IOException, InterruptedException {
+        if (StringUtils.isEmpty(appId)) {
+            logger.warn("The app is is null or empty");
+            return 0;
+        }
+
         String state = getAppState(appId);
         if ("SUCCEEDED".equals(state) || "FAILED".equals(state) || "KILLED".equals(state)) {
             logger.warn(appId + "is final state, no need to kill");
@@ -427,8 +470,7 @@ public class SparkExecutable extends AbstractExecutable {
     }
 
     private void attachSegmentsMetadataWithDict(List<CubeSegment> segments) throws IOException {
-        Set<String> dumpList = new LinkedHashSet<>();
-        dumpList.addAll(JobRelatedMetaUtil.collectCubeMetadata(segments.get(0).getCubeInstance()));
+        Set<String> dumpList = new LinkedHashSet<>(JobRelatedMetaUtil.collectCubeMetadata(segments.get(0).getCubeInstance()));
         ResourceStore rs = ResourceStore.getStore(segments.get(0).getConfig());
         for (CubeSegment segment : segments) {
             dumpList.addAll(segment.getDictionaryPaths());
@@ -441,7 +483,7 @@ public class SparkExecutable extends AbstractExecutable {
                 this.getParam(SparkCubingByLayer.OPTION_META_URL.getOpt()));
     }
 
-    private void readCounters(final Map<String, String> info) {
+    protected void readCounters(final Map<String, String> info) {
         String counter_save_as = getCounterSaveAs();
         if (counter_save_as != null) {
             String[] saveAsNames = counter_save_as.split(",");

@@ -156,16 +156,22 @@ public class ManagedUser extends RootPersistentEntity implements UserDetails {
         }
     }
 
-    public void addAuthoritie(String auth) {
+    public void addAuthorities(String auth) {
         if (this.authorities == null) {
             this.authorities = Lists.newArrayList();
         }
         authorities.add(new SimpleGrantedAuthority(auth));
     }
 
-    public void removeAuthoritie(String auth) {
+    public void removeAuthorities(String auth) {
         Preconditions.checkNotNull(this.authorities);
         authorities.remove(new SimpleGrantedAuthority(auth));
+    }
+
+    public void clearAuthenticateFailedRecord() {
+        this.wrongTime = 0;
+        this.locked = false;
+        this.lockedTime = 0;
     }
 
     public boolean isDisabled() {
@@ -240,7 +246,7 @@ public class ManagedUser extends RootPersistentEntity implements UserDetails {
         ManagedUser that = (ManagedUser) o;
         return disabled == that.disabled && defaultPassword == that.defaultPassword && locked == that.locked
                 && lockedTime == that.lockedTime && wrongTime == that.wrongTime
-                && Objects.equals(username, that.username) && Objects.equals(password, that.password)
+                && username.equalsIgnoreCase(that.username) && Objects.equals(password, that.password)
                 && Objects.equals(authorities, that.authorities);
     }
 

@@ -27,11 +27,12 @@ KylinApp.constant('jobConfig', {
     {name: 'DISCARDED', value: 16}
   ],
   timeFilter: [
-    {name: 'LAST ONE DAY', value: 0},
-    {name: 'LAST ONE WEEK', value: 1},
-    {name: 'LAST ONE MONTH', value: 2},
-    {name: 'LAST ONE YEAR', value: 3},
-    {name: 'ALL', value: 4},
+    {name: 'CURRENT DAY', value: 0},
+    {name: 'LAST ONE DAY', value: 1},
+    {name: 'LAST ONE WEEK', value: 2},
+    {name: 'LAST ONE MONTH', value: 3},
+    {name: 'LAST ONE YEAR', value: 4},
+    {name: 'ALL', value: 5},
   ],
   theaditems: [
     {attr: 'name', name: 'Job Name'},
@@ -48,6 +49,7 @@ KylinApp.constant('jobConfig', {
   queryitems: [
   {attr: 'server', name: 'Server'},
   {attr: 'user', name: 'User'},
+  {attr: 'cube', name: 'Hit Cube'},
   {attr: 'sql', name: 'Sql'},
   {attr: 'adj', name: 'Description'},
   {attr: 'running_seconds', name: 'Running Seconds'},

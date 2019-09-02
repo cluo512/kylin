@@ -21,6 +21,7 @@ package org.apache.kylin.source.kafka;
 import java.io.IOException;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 
 import org.apache.kafka.clients.consumer.KafkaConsumer;
 import org.apache.kafka.common.PartitionInfo;
@@ -43,7 +44,9 @@ import org.apache.kylin.source.ISampleDataDeployer;
 import org.apache.kylin.source.ISource;
 import org.apache.kylin.source.ISourceMetadataExplorer;
 import org.apache.kylin.source.SourcePartition;
+import org.apache.kylin.source.hive.HiveMetadataExplorer;
 import org.apache.kylin.source.kafka.config.KafkaConfig;
+import org.apache.kylin.source.kafka.config.KafkaConsumerProperties;
 import org.apache.kylin.source.kafka.util.KafkaClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -105,7 +108,8 @@ public class KafkaSource implements ISource {
                 .getKafkaConfig(cube.getRootFactTable());
         final String brokers = KafkaClient.getKafkaBrokers(kafkaConfig);
         final String topic = kafkaConfig.getTopic();
-        try (final KafkaConsumer consumer = KafkaClient.getKafkaConsumer(brokers, cube.getName(), null)) {
+        Properties property = KafkaConsumerProperties.getInstanceFromEnv().extractKafkaConfigToProperties();
+        try (final KafkaConsumer consumer = KafkaClient.getKafkaConsumer(brokers, cube.getName(), property)) {
             final List<PartitionInfo> partitionInfos = consumer.partitionsFor(topic);
             logger.info("Get {} partitions for topic {} ", partitionInfos.size(), topic);
             for (PartitionInfo partitionInfo : partitionInfos) {
@@ -250,7 +254,8 @@ public class KafkaSource implements ISource {
 
     @Override
     public ISampleDataDeployer getSampleDataDeployer() {
-        throw new UnsupportedOperationException();
+        // joined lookup table
+        return new HiveMetadataExplorer();
     }
 
     @Override

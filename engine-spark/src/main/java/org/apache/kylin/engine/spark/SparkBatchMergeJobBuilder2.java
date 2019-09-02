@@ -77,7 +77,7 @@ public class SparkBatchMergeJobBuilder2 extends JobBuilderSupport {
     }
 
     public SparkExecutable createMergeDictionaryStep(CubeSegment seg, String jobID, List<String> mergingSegmentIds) {
-        final SparkExecutable sparkExecutable = new SparkExecutable();
+        final SparkExecutable sparkExecutable = SparkExecutableFactory.instance(seg.getConfig());
         sparkExecutable.setClassName(SparkMergingDictionary.class.getName());
 
         sparkExecutable.setParam(SparkMergingDictionary.OPTION_CUBE_NAME.getOpt(), seg.getRealization().getName());
@@ -88,7 +88,7 @@ public class SparkBatchMergeJobBuilder2 extends JobBuilderSupport {
         sparkExecutable.setParam(SparkMergingDictionary.OPTION_OUTPUT_PATH_STAT.getOpt(), getStatisticsPath(jobID));
 
         sparkExecutable.setJobId(jobID);
-        sparkExecutable.setName(ExecutableConstants.STEP_NAME_MERGE_DICTIONARY);
+        sparkExecutable.setName(ExecutableConstants.STEP_NAME_MERGE_DICTIONARY + ":" + seg.toString());
         sparkExecutable.setSparkConfigName(ExecutableConstants.SPARK_SPECIFIC_CONFIG_NAME_MERGE_DICTIONARY);
 
         StringBuilder jars = new StringBuilder();
@@ -108,7 +108,7 @@ public class SparkBatchMergeJobBuilder2 extends JobBuilderSupport {
         String formattedPath = StringUtil.join(mergingCuboidPaths, ",");
         String outputPath = getCuboidRootPath(jobID);
 
-        final SparkExecutable sparkExecutable = new SparkExecutable();
+        final SparkExecutable sparkExecutable = SparkExecutableFactory.instance(seg.getConfig());
         sparkExecutable.setClassName(SparkCubingMerge.class.getName());
         sparkExecutable.setParam(SparkCubingMerge.OPTION_CUBE_NAME.getOpt(), seg.getRealization().getName());
         sparkExecutable.setParam(SparkCubingMerge.OPTION_SEGMENT_ID.getOpt(), seg.getUuid());
@@ -117,7 +117,7 @@ public class SparkBatchMergeJobBuilder2 extends JobBuilderSupport {
         sparkExecutable.setParam(SparkCubingMerge.OPTION_OUTPUT_PATH.getOpt(), outputPath);
 
         sparkExecutable.setJobId(jobID);
-        sparkExecutable.setName(ExecutableConstants.STEP_NAME_MERGE_CUBOID);
+        sparkExecutable.setName(ExecutableConstants.STEP_NAME_MERGE_CUBOID + ":" + seg.toString());
 
         StringBuilder jars = new StringBuilder();
 
